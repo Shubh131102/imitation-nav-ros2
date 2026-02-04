@@ -1,4 +1,3 @@
-
 # Data Directory
 
 This folder contains training and evaluation datasets.
@@ -14,12 +13,12 @@ data/
 
 ## Data Format
 
-**Expert demonstrations (CSV):**
+Expert demonstrations (CSV):
 ```
 timestamp, lidar_0, lidar_1, ..., lidar_179, goal_x, goal_y, linear_vel, angular_vel
 ```
 
-**Evaluation logs (JSON):**
+Evaluation logs (JSON):
 ```json
 {
   "episode_id": 1,
