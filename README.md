@@ -1,124 +1,167 @@
 # Uncertainty-Aware Imitation Learning for Indoor Navigation
 
-Master's thesis implementing adaptive autonomous navigation through behavioral cloning with uncertainty quantification for safe indoor robot operation.
+Master's thesis implementing adaptive autonomous navigation through behavioral cloning with Monte Carlo Dropout uncertainty quantification for safe indoor robot operation.
 
-## Motivation
+## Overview
 
-Traditional imitation learning suffers from distribution mismatch between training and deployment. This work addresses it by:
-1. Using DAgger (Dataset Aggregation) for iterative policy improvement
-2. Implementing Monte Carlo Dropout for real-time uncertainty estimation
-3. Adaptive speed control based on model confidence
+This system addresses the fundamental challenge in imitation learning: distribution shift between training and deployment. When robots encounter unfamiliar environments, standard policies produce confident but potentially dangerous predictions. Our solution integrates real-time uncertainty estimation with safety-aware control to enable adaptive navigation that recognizes and responds to its own limitations.
 
-## Key Contributions
+## Key Results
 
-**71% reduction in high-uncertainty events** - Robot slows down when model is uncertain
-**Zero collision rate** - Combined uncertainty-aware control with LiDAR safety monitoring
-**5x faster convergence** - DAgger significantly outperforms standard behavioral cloning
-**Real-time performance** - 5 Hz inference with MC Dropout (20 forward passes)
+- 43% reduction in prediction uncertainty through targeted DAgger refinement
+- 71% decrease in high-uncertainty events (99.8% to 28.6%)
+- 5x improvement in navigation speed while maintaining zero collisions
+- Well-calibrated uncertainty across diverse environments (0.073 to 0.135)
+- Real-time operation at 5 Hz on standard CPU hardware
 
-## Technical Architecture
+## System Architecture
 
-**Perception Pipeline**
-- 360-degree LiDAR processing (720 points downsampled to 180)
-- Goal-relative positioning in robot frame
-- Minimum distance extraction for safety layer
+The complete system integrates three core components:
 
-**Neural Network**
+**1. Monte Carlo Dropout Uncertainty Estimation**
+- 20 stochastic forward passes per prediction
+- Combined uncertainty from linear and angular velocity predictions
+- Real-time computation at 5 Hz
+
+**2. LiDAR-Based Safety Monitoring**
+- 360-degree obstacle proximity analysis
+- Risk score computation based on minimum clearance
+- Independent environmental hazard assessment
+
+**3. Adaptive Control via Decision Matrix**
+- Speed modulation based on uncertainty and risk levels
+- Nine control states from full speed to complete stop
+- Conservative when uncertain, efficient when confident
+
+## Three-Phase Development
+
+### Phase 1: Baseline Behavior Cloning
+- 1,113 expert demonstrations from manual teleoperation
+- Conv1D CNN architecture (186,178 parameters)
+- Test loss: 0.010 MSE
+- Limitation: No uncertainty awareness
+
+### Phase 2: Uncertainty Integration
+- Added MC Dropout and safety monitoring
+- Decision matrix for velocity modulation
+- Detected high uncertainty 99.8% of time
+- Result: Safe but impractically slow (0.009 m/s)
+
+### Phase 2.5: DAgger Refinement
+- 987 targeted demonstrations in high-uncertainty regions
+- Combined dataset: 2,100 samples
+- Test loss improved to 0.006 MSE
+- Achieved balanced performance: 0.045 m/s with zero collisions
+
+## Technical Specifications
+
+**Platform**
+- Robot: TurtleBot3 Burger (differential drive)
+- Simulator: Gazebo 11
+- Framework: ROS Noetic
+- Deep Learning: PyTorch 1.9
+
+**Network Architecture**
 ```
-Input: LiDAR scan (180) + Goal vector (2)
-Conv1D(1→32, k=5) + ReLU + Dropout(0.3)
-Conv1D(32→64, k=5) + ReLU + Dropout(0.3)
-Flatten + Dense(128) + Dropout(0.3)
-Output: [v_linear, v_angular]
+Input: 360-dim LiDAR scan
+Conv1D(16 filters, kernel=5) + ReLU + MaxPool(2)
+Conv1D(32 filters, kernel=5) + ReLU + MaxPool(2)
+Flatten
+Dense(64) + ReLU + Dropout(0.2)
+Output: [linear_velocity, angular_velocity]
 ```
 
-**Uncertainty Quantification**
-- Monte Carlo Dropout with 20 stochastic forward passes
-- Standard deviation across predictions as uncertainty metric
-- Threshold-based speed modulation
-
-**Control Strategy**
-```python
-if uncertainty > 0.3:
-    velocity *= (1 - 0.5 * uncertainty)  # Adaptive slowdown
-if min_lidar_distance < 0.4:
-    velocity = 0  # Emergency brake
+**Uncertainty Computation**
+```
+u = sqrt(σ²_vx + σ²_ωz)
+where σ is std dev across 20 MC samples
 ```
 
-## Results
+## Multi-Environment Validation
 
-Performance across three environment complexities:
+Tested across three distinct environments without retraining:
 
-| Environment | Success Rate | Avg Uncertainty | Collisions |
-|-------------|--------------|-----------------|------------|
-| Simple      | 95%          | 0.12            | 0/50       |
-| Medium      | 92%          | 0.18            | 0/50       |
-| Complex     | 88%          | 0.24            | 0/50       |
+| Environment | Mean Uncertainty | Speed (m/s) | Reduction |
+|-------------|------------------|-------------|-----------|
+| Empty World | 0.073            | 0.160       | 0%        |
+| House World | 0.112            | 0.058       | 31%       |
+| Original    | 0.135            | 0.045       | 43%       |
 
-**Comparison with baselines:**
-- Behavioral Cloning alone: 78% success, 2.1% collision rate
-- BC + DAgger: 85% success, 0.4% collision rate  
-- BC + DAgger + Uncertainty (ours): 92% success, 0% collision rate
+Uncertainty scales appropriately with environment complexity, demonstrating calibrated confidence estimation.
 
-## Implementation
+## Installation
+```bash
+# Clone repository
+git clone https://github.com/yourusername/uncertainty-aware-navigation.git
+cd uncertainty-aware-navigation
 
-**Training Pipeline**
-1. Expert demonstrations collected via Nav2 in Gazebo
-2. Initial behavioral cloning on 1,478 state-action pairs
-3. DAgger iterations with beta-decay schedule (10 iterations)
-4. Model selection based on validation uncertainty distribution
+# Create ROS workspace
+mkdir -p ~/nav_ws/src
+cd ~/nav_ws/src
+ln -s /path/to/uncertainty-aware-navigation .
 
-**Deployment Stack**
-- ROS2 Humble on Ubuntu 22.04
-- PyTorch 2.0 for neural network
-- Custom Nav2 integration for goal handling
-- Real-time visualization in RViz
+# Install dependencies
+cd ~/nav_ws
+rosdep install --from-paths src --ignore-src -r -y
+pip install -r requirements.txt
+
+# Build
+colcon build --packages-select uncertainty_nav
+source install/setup.bash
+```
+
+## Usage
+
+**Collect Expert Demonstrations**
+```bash
+ros2 launch uncertainty_nav collect_demos.launch.py
+```
+
+**Train Initial Model**
+```bash
+python3 scripts/train_bc.py --data data/expert_demos --epochs 100
+```
+
+**Run DAgger Refinement**
+```bash
+python3 scripts/train_dagger.py --iterations 10 --beta-decay 0.9
+```
+
+**Deploy Navigation System**
+```bash
+ros2 launch uncertainty_nav navigation.launch.py model:=models/dagger_final.pth
+```
 
 ## Repository Structure
 ```
 uncertainty_nav/
-├── config/           Navigation and training parameters
-├── launch/           ROS2 launch files for sim and deployment
-├── models/           Neural network architecture and uncertainty
-├── scripts/          Training (BC, DAgger) and evaluation
-├── src/              ROS2 nodes (controller, perception, safety)
-├── worlds/           Gazebo environments (simple/medium/complex)
-└── data/             Expert demonstrations and evaluation logs
-```
-
-## Quick Start
-```bash
-# Build workspace
-colcon build --packages-select uncertainty_nav
-source install/setup.bash
-
-# Collect expert data
-ros2 launch uncertainty_nav collect_demos.launch.py
-
-# Train with DAgger
-python3 scripts/train_dagger.py --iterations 10 --beta-decay 0.9
-
-# Deploy navigation
-ros2 launch uncertainty_nav deploy.launch.py model:=models/dagger_final.pth
+├── config/               Navigation and training parameters
+├── data/                 Expert demonstrations and logs
+├── launch/               ROS launch files
+├── models/               Neural network definitions
+├── scripts/              Training and evaluation scripts
+├── src/                  ROS nodes (controller, perception, safety)
+├── worlds/               Gazebo simulation environments
+└── docs/                 Technical report and presentation
 ```
 
 ## Citation
 ```bibtex
 @mastersthesis{jangle2025uncertainty,
-  title={Uncertainty-Aware Imitation Learning for Indoor Autonomous Navigation},
-  author={Jangle, Shubham},
+  title={Uncertainty-Aware Imitation Learning for Safe Indoor Robot Navigation},
+  author={Jangle, Shubham Yogesh},
   school={University of California, Riverside},
-  year={2025}
+  year={2025},
+  month={December}
 }
 ```
 
-## Future Directions
+## License
 
-- Multi-robot coordination with distributed uncertainty sharing
-- Semantic understanding for context-aware uncertainty
-- Transfer to physical TurtleBot3 platform
-- Alternative uncertainty methods: ensembles, Bayesian neural networks
+MIT License
 
----
+## Contact
 
-**Contact:** sjang041@ucr.edu | [LinkedIn](link) | [Portfolio](link)
+Shubham Jangle  
+sjang041@ucr.edu  
+MS Robotics Engineering, UC Riverside
